@@ -1,0 +1,20 @@
+[functions.retrieve-event-context]
+verify_jwt = false
+[functions.receive-vendor-suggestion]
+verify_jwt = false
+[functions.receive-commercial-impact]
+verify_jwt = false
+[functions.receive-approved-change]
+verify_jwt = false
+[functions.receive-pdf]
+verify_jwt = false
+[functions.start-event-change]
+verify_jwt = false
+[functions.receive-yoxa-hitl]
+verify_jwt = false
+[functions.get-pending-approvals]
+verify_jwt = false
+[functions.respond-to-yoxa-hitl]
+verify_jwt = false
+[functions.get-conversation-updates]
+verify_jwt = false
