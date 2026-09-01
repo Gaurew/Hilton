@@ -17,9 +17,9 @@ import type { EventMessage } from "@/lib/events/types";
 import { createClient } from "@/lib/supabase/client";
 
 const prompts = [
-  "For the Hilton Big Fat Indian Wedding, please add 40 vegetarian meals and 15 Jain meals to the approved dinner service.",
-  "The guest count for our conference has increased. Please assess the room and catering impact.",
-  "Please review the changes needed to accommodate additional guests while preserving the event schedule.",
+  "For the cocktail event, add 10 cocktail tables and matching bar seating. For this simulation, assume two bar seats per table, for a total of 20 bar seats, unless the customer later confirms a different seat count.",
+  "Customer request: Please increase the mithai boxes for The Big Fat Indian Wedding from 150 to 230 boxes. Keep the approved event date, delivery window, packaging style, and existing menu selection unchanged.",
+  "Customer requests: Add 25 welcome hampers for newly added rooms to the Hilton wedding event. Please assess availability, incremental cost, approval implications, and coordinate the change if approved.",
 ];
 
 type ApprovalOption = { option_id: string; title: string; description: string };

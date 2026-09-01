@@ -12,20 +12,69 @@ const hashAccessKey = async (value: string) => Array.from(new Uint8Array(await c
 const equal = (left: string, right: string) => { if (left.length !== right.length) return false; let difference = 0; for (let index = 0; index < left.length; index += 1) difference |= left.charCodeAt(index) ^ right.charCodeAt(index); return difference === 0; };
 
 
-async function ensureDemoEventContext(client: ReturnType<typeof serviceClient>, visitorId: string) {
-  const { data: existingEvent } = await client.from("hilton_events").select("id").eq("visitor_id", visitorId).eq("status", "approved").limit(1).maybeSingle();
-  if (existingEvent) {
-    const { data: existingContext } = await client.from("event_contexts").select("id").eq("event_id", existingEvent.id).limit(1).maybeSingle();
-    if (existingContext) return true;
+const TEMPLATE_VISITOR_ID = "11111111-1111-4111-8111-111111111111";
+
+type DemoEvent = { id: string; event_name: string; property_name: string; event_date: string };
+
+async function ensureDemoEventContexts(client: ReturnType<typeof serviceClient>, visitorId: string): Promise<DemoEvent[] | null> {
+  const { data: templates, error: templateError } = await client
+    .from("hilton_events")
+    .select("id, event_name, property_name, event_date")
+    .eq("visitor_id", TEMPLATE_VISITOR_ID)
+    .eq("status", "approved");
+  if (templateError || !templates?.length) return null;
+
+  const copiedEvents: DemoEvent[] = [];
+  for (const template of templates) {
+    const { data: templateContext, error: contextReadError } = await client
+      .from("event_contexts")
+      .select("approved_context")
+      .eq("event_id", template.id)
+      .maybeSingle();
+    if (contextReadError || !templateContext) return null;
+
+    const { data: existingEvent, error: existingEventError } = await client
+      .from("hilton_events")
+      .select("id, event_name, property_name, event_date")
+      .eq("visitor_id", visitorId)
+      .eq("event_name", template.event_name)
+      .eq("property_name", template.property_name)
+      .eq("event_date", template.event_date)
+      .maybeSingle();
+    if (existingEventError) return null;
+
+    let event = existingEvent;
+    if (!event) {
+      const { data: insertedEvent, error: insertEventError } = await client
+        .from("hilton_events")
+        .insert({ visitor_id: visitorId, event_name: template.event_name, property_name: template.property_name, event_date: template.event_date, status: "approved" })
+        .select("id, event_name, property_name, event_date")
+        .single();
+      if (insertEventError || !insertedEvent) return null;
+      event = insertedEvent;
+    }
+
+    const { error: contextWriteError } = await client
+      .from("event_contexts")
+      .upsert({ event_id: event.id, approved_context: templateContext.approved_context }, { onConflict: "event_id" });
+    if (contextWriteError) return null;
+    copiedEvents.push(event);
   }
-  const { data: templateEvent } = await client.from("hilton_events").select("id, event_name, property_name, event_date").eq("status", "approved").limit(1).maybeSingle();
-  if (!templateEvent) return false;
-  const { data: templateContext } = await client.from("event_contexts").select("approved_context").eq("event_id", templateEvent.id).limit(1).maybeSingle();
-  if (!templateContext) return false;
-  const { data: event, error: eventError } = await client.from("hilton_events").insert({ visitor_id: visitorId, event_name: templateEvent.event_name, property_name: templateEvent.property_name, event_date: templateEvent.event_date, status: "approved" }).select("id").single();
-  if (eventError || !event) return false;
-  const { error: contextError } = await client.from("event_contexts").insert({ event_id: event.id, approved_context: templateContext.approved_context });
-  return !contextError;
+  return copiedEvents;
+}
+
+function selectEventForRequest(events: DemoEvent[], changeRequest: string): DemoEvent | null {
+  const request = changeRequest.toLowerCase();
+  if (request.includes("cocktail table") || request.includes("bar seating") || request.includes("bar seats")) {
+    return events.find((event) => event.event_name.includes("Cocktail")) ?? null;
+  }
+  if (request.includes("mithai") || request.includes("mithai boxes")) {
+    return events.find((event) => event.event_name === "The Big Fat Indian Wedding" && event.event_date === "2026-01-18") ?? null;
+  }
+  if (request.includes("welcome hamper") || request.includes("newly added rooms")) {
+    return events.find((event) => event.event_name.includes("Welcome Hampers")) ?? null;
+  }
+  return null;
 }
 
 Deno.serve(async (request) => {
@@ -52,13 +101,15 @@ Deno.serve(async (request) => {
     const { error } = await client.from("hilton_visitors").update({ access_key_hash: accessKeyHash }).eq("id", visitorId);
     if (error) return respond({ error: "Unable to secure the demo workspace." }, 500);
   }
-  if (!await ensureDemoEventContext(client, visitorId)) return respond({ error: "Unable to prepare the approved demo event context." }, 500);
+  const demoEvents = await ensureDemoEventContexts(client, visitorId);
+  if (!demoEvents) return respond({ error: "Unable to prepare the approved demo event contexts." }, 500);
+  const selectedEvent = selectEventForRequest(demoEvents, changeRequest);
   let conversationId = requestedConversationId as string | undefined;
   if (conversationId) {
     const { data: conversation, error } = await client.from("event_conversations").select("id").eq("id", conversationId).eq("visitor_id", visitorId).maybeSingle();
     if (error || !conversation) return respond({ error: "This conversation is not available in the current workspace." }, 404);
   } else {
-    const { data: conversation, error } = await client.from("event_conversations").insert({ visitor_id: visitorId, title: changeRequest.slice(0, 96) }).select("id").single();
+    const { data: conversation, error } = await client.from("event_conversations").insert({ visitor_id: visitorId, event_id: selectedEvent?.id ?? null, title: changeRequest.slice(0, 96) }).select("id").single();
     if (error || !conversation) return respond({ error: "Unable to start a conversation." }, 500);
     conversationId = conversation.id;
   }
