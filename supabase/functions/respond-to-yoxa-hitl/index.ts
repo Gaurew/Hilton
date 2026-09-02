@@ -16,7 +16,7 @@ Deno.serve(async (request) => {
   const client = serviceClient();
   const { data: visitor } = await client.from("hilton_visitors").select("access_key_hash").eq("id", body.visitor_id).maybeSingle();
   if (!visitor?.access_key_hash || !equal(visitor.access_key_hash, await hash(body.visitor_access_key))) return respond({ error: "Workspace not found." }, 403);
-  const { data: task, error } = await client.from("yoxa_approval_tasks").select("id, request_id, options, status, event_conversations!inner(id, visitor_id)").eq("id", body.approval_id).eq("conversation_id", body.conversation_id).eq("event_conversations.visitor_id", body.visitor_id).maybeSingle();
+  const { data: task, error } = await client.from("yoxa_approval_tasks").select("id, request_id, title, options, status, event_conversations!inner(id, visitor_id)").eq("id", body.approval_id).eq("conversation_id", body.conversation_id).eq("event_conversations.visitor_id", body.visitor_id).maybeSingle();
   if (error || !task) return respond({ error: "Approval task not found." }, 404);
   if (task.status === "answered") return respond({ status: "answered" });
   if (selectedOptionId && (!Array.isArray(task.options) || !task.options.some((option: { option_id?: string }) => option.option_id === selectedOptionId))) return respond({ error: "That approval option is no longer available." }, 400);
@@ -30,5 +30,9 @@ Deno.serve(async (request) => {
   if (!yoxaResponse.ok) return respond({ error: "YOXA could not accept the decision. Please try again." }, 502);
   const { error: updateError } = await client.from("yoxa_approval_tasks").update({ status: "answered", selected_option_id: selectedOptionId, override_message: overrideMessage, answered_at: new Date().toISOString() }).eq("id", task.id);
   if (updateError) return respond({ error: "YOXA accepted the decision, but the local status could not be saved." }, 202);
+  const selectedOption = selectedOptionId && Array.isArray(task.options) ? task.options.find((option: { option_id?: string }) => option.option_id === selectedOptionId) as { title?: string } | undefined : undefined;
+  const decisionMessage = selectedOption?.title ? `**Decision for ${task.title}:** ${selectedOption.title}` : `**Decision for ${task.title}:** ${overrideMessage}`;
+  const { error: messageError } = await client.from("conversation_messages").insert({ conversation_id: body.conversation_id, role: "user", category: "human_approval_response", content_markdown: decisionMessage });
+  if (messageError) return respond({ error: "YOXA accepted the decision, but the conversation history could not be saved." }, 202);
   return respond({ status: "answered" }, 202);
 });

@@ -22,7 +22,7 @@ export function serviceClient() {
 
 export async function readJson(request: Request) { try { return await request.json(); } catch { return null; } }
 export async function persistAgentMessage(conversationId: string, category: string, content: string) {
-  const { data, error } = await serviceClient().from("conversation_messages").insert({ conversation_id: conversationId, role: "agent", category, content_markdown: content }).select("id").single();
+  const { data, error } = await serviceClient().from("conversation_messages").insert({ conversation_id: conversationId, role: "assistant", category, content_markdown: content }).select("id").single();
   if (error) throw error;
   return data;
 }

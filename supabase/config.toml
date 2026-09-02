@@ -6,6 +6,8 @@ verify_jwt = false
 verify_jwt = false
 [functions.receive-approved-change]
 verify_jwt = false
+[functions.update-event-plan]
+verify_jwt = false
 [functions.receive-pdf]
 verify_jwt = false
 [functions.start-event-change]
@@ -17,4 +19,7 @@ verify_jwt = false
 [functions.respond-to-yoxa-hitl]
 verify_jwt = false
 [functions.get-conversation-updates]
+verify_jwt = false
+
+[functions.get-event-history]
 verify_jwt = false

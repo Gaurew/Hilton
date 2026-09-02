@@ -9,14 +9,32 @@ const equal = (left: string, right: string) => { if (left.length !== right.lengt
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (request.method !== "POST") return respond({ error: "Method not allowed." }, 405);
+
   const body = await readJson(request);
-  if (typeof body?.visitor_id !== "string" || typeof body?.conversation_id !== "string" || typeof body?.visitor_access_key !== "string") return respond({ error: "Workspace credentials are required." }, 400);
+  if (typeof body?.visitor_id !== "string" || typeof body?.visitor_access_key !== "string") return respond({ error: "Workspace credentials are required." }, 400);
+  const conversationId = typeof body?.conversation_id === "string" ? body.conversation_id : null;
+  const eventId = typeof body?.event_id === "string" ? body.event_id : null;
+  if (!conversationId && !eventId) return respond({ error: "conversation_id or event_id is required." }, 400);
+
   const client = serviceClient();
   const { data: visitor } = await client.from("hilton_visitors").select("access_key_hash").eq("id", body.visitor_id).maybeSingle();
   if (!visitor?.access_key_hash || !equal(visitor.access_key_hash, await hash(body.visitor_access_key))) return respond({ error: "Workspace not found." }, 403);
-  const { data: conversation } = await client.from("event_conversations").select("id").eq("id", body.conversation_id).eq("visitor_id", body.visitor_id).maybeSingle();
-  if (!conversation) return respond({ error: "Conversation not found." }, 404);
-  const { data, error } = await client.from("yoxa_approval_tasks").select("id, title, description, options, status, selected_option_id, override_message").eq("conversation_id", body.conversation_id).eq("status", "pending").order("created_at");
+
+  let conversationsQuery = client.from("event_conversations").select("id").eq("visitor_id", body.visitor_id);
+  if (conversationId) conversationsQuery = conversationsQuery.eq("id", conversationId);
+  else conversationsQuery = conversationsQuery.eq("event_id", eventId!);
+  const { data: conversations, error: conversationError } = await conversationsQuery;
+  if (conversationError) return respond({ error: "Unable to retrieve event conversations." }, 500);
+
+  const conversationIds = (conversations ?? []).map((conversation) => conversation.id);
+  if (!conversationIds.length) return respond({ approvals: [] });
+
+  const { data, error } = await client
+    .from("yoxa_approval_tasks")
+    .select("id, conversation_id, title, description, options, status, selected_option_id, override_message")
+    .in("conversation_id", conversationIds)
+    .eq("status", "pending")
+    .order("created_at");
   if (error) return respond({ error: "Unable to retrieve approvals." }, 500);
   return respond({ approvals: data ?? [] });
 });

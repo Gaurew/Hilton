@@ -12,71 +12,6 @@ const hashAccessKey = async (value: string) => Array.from(new Uint8Array(await c
 const equal = (left: string, right: string) => { if (left.length !== right.length) return false; let difference = 0; for (let index = 0; index < left.length; index += 1) difference |= left.charCodeAt(index) ^ right.charCodeAt(index); return difference === 0; };
 
 
-const TEMPLATE_VISITOR_ID = "11111111-1111-4111-8111-111111111111";
-
-type DemoEvent = { id: string; event_name: string; property_name: string; event_date: string };
-
-async function ensureDemoEventContexts(client: ReturnType<typeof serviceClient>, visitorId: string): Promise<DemoEvent[] | null> {
-  const { data: templates, error: templateError } = await client
-    .from("hilton_events")
-    .select("id, event_name, property_name, event_date")
-    .eq("visitor_id", TEMPLATE_VISITOR_ID)
-    .eq("status", "approved");
-  if (templateError || !templates?.length) return null;
-
-  const copiedEvents: DemoEvent[] = [];
-  for (const template of templates) {
-    const { data: templateContext, error: contextReadError } = await client
-      .from("event_contexts")
-      .select("approved_context")
-      .eq("event_id", template.id)
-      .maybeSingle();
-    if (contextReadError || !templateContext) return null;
-
-    const { data: existingEvent, error: existingEventError } = await client
-      .from("hilton_events")
-      .select("id, event_name, property_name, event_date")
-      .eq("visitor_id", visitorId)
-      .eq("event_name", template.event_name)
-      .eq("property_name", template.property_name)
-      .eq("event_date", template.event_date)
-      .maybeSingle();
-    if (existingEventError) return null;
-
-    let event = existingEvent;
-    if (!event) {
-      const { data: insertedEvent, error: insertEventError } = await client
-        .from("hilton_events")
-        .insert({ visitor_id: visitorId, event_name: template.event_name, property_name: template.property_name, event_date: template.event_date, status: "approved" })
-        .select("id, event_name, property_name, event_date")
-        .single();
-      if (insertEventError || !insertedEvent) return null;
-      event = insertedEvent;
-    }
-
-    const { error: contextWriteError } = await client
-      .from("event_contexts")
-      .upsert({ event_id: event.id, approved_context: templateContext.approved_context }, { onConflict: "event_id" });
-    if (contextWriteError) return null;
-    copiedEvents.push(event);
-  }
-  return copiedEvents;
-}
-
-function selectEventForRequest(events: DemoEvent[], changeRequest: string): DemoEvent | null {
-  const request = changeRequest.toLowerCase();
-  if (request.includes("cocktail table") || request.includes("bar seating") || request.includes("bar seats")) {
-    return events.find((event) => event.event_name.includes("Cocktail")) ?? null;
-  }
-  if (request.includes("mithai") || request.includes("mithai boxes")) {
-    return events.find((event) => event.event_name === "The Big Fat Indian Wedding" && event.event_date === "2026-01-18") ?? null;
-  }
-  if (request.includes("welcome hamper") || request.includes("newly added rooms")) {
-    return events.find((event) => event.event_name.includes("Welcome Hampers")) ?? null;
-  }
-  return null;
-}
-
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (request.method !== "POST") return respond({ error: "Method not allowed." }, 405);
@@ -84,6 +19,7 @@ Deno.serve(async (request) => {
   const changeRequest = typeof body?.change_request === "string" ? body.change_request.trim() : "";
   const visitorId = isUuid(body?.visitor_id) ? body.visitor_id : crypto.randomUUID();
   const requestedConversationId = body?.conversation_id;
+  const requestedEventId = isUuid(body?.event_id) ? body.event_id : null;
   const visitorAccessKey = typeof body?.visitor_access_key === "string" ? body.visitor_access_key : "";
   if (visitorAccessKey.length < 32) return respond({ error: "A valid demo workspace key is required." }, 401);
   if (!changeRequest) return respond({ error: "change_request is required." }, 400);
@@ -101,9 +37,14 @@ Deno.serve(async (request) => {
     const { error } = await client.from("hilton_visitors").update({ access_key_hash: accessKeyHash }).eq("id", visitorId);
     if (error) return respond({ error: "Unable to secure the demo workspace." }, 500);
   }
-  const demoEvents = await ensureDemoEventContexts(client, visitorId);
-  if (!demoEvents) return respond({ error: "Unable to prepare the approved demo event contexts." }, 500);
-  const selectedEvent = selectEventForRequest(demoEvents, changeRequest);
+  if (!requestedEventId) return respond({ error: "event_id is required." }, 400);
+  const { data: selectedEvent } = await client
+    .from("hilton_events")
+    .select("id, event_name, property_name, event_date, event_wedding_profiles!inner(event_id)")
+    .eq("id", requestedEventId)
+    .eq("status", "approved")
+    .maybeSingle();
+  if (!selectedEvent) return respond({ error: "An approved Event Plan is required for this request." }, 404);
   let conversationId = requestedConversationId as string | undefined;
   if (conversationId) {
     const { data: conversation, error } = await client.from("event_conversations").select("id").eq("id", conversationId).eq("visitor_id", visitorId).maybeSingle();
@@ -113,18 +54,25 @@ Deno.serve(async (request) => {
     if (error || !conversation) return respond({ error: "Unable to start a conversation." }, 500);
     conversationId = conversation.id;
   }
-  const { error: messageError } = await client.from("conversation_messages").insert({ conversation_id: conversationId, role: "visitor", category: "change_request", content_markdown: changeRequest });
+  const { error: messageError } = await client.from("conversation_messages").insert({ conversation_id: conversationId, role: "user", category: "change_request", content_markdown: changeRequest });
   if (messageError) return respond({ error: "Unable to save the change request." }, 500);
 
   const triggerUrl = Deno.env.get("YOXA_TRIGGER_URL");
   const deploymentSecret = Deno.env.get("YOXA_DEPLOYMENT_SECRET");
   if (!triggerUrl || !deploymentSecret) return respond({ error: "The YOXA workflow is not configured yet. Your request was saved." }, 503);
   const triggerId = crypto.randomUUID();
+  const { data: historyRows, error: historyError } = await client
+    .from("conversation_messages")
+    .select("role, content_markdown, created_at")
+    .eq("conversation_id", conversationId)
+    .order("created_at");
+  if (historyError) return respond({ error: "Your request was saved, but this chat's prior messages could not be prepared." }, 500);
+  const conversationHistory = (historyRows ?? []).map((message) => `[${message.role === "user" || message.role === "visitor" ? "User" : "Assistant"}] ${message.content_markdown}`).join("\n\n");
   const triggerText = [
-    "A Hilton Events participant application received this customer event-change request.", "",
-    "Customer change request (use exactly as submitted):", changeRequest, "",
+    "A Hilton Events participant application received an event-change request.", "",
+    "Conversation history for this chat only (includes the latest customer message; use it as prior context):", conversationHistory || "No prior messages.", "",
     "Integration identifiers (retain and pass unchanged to Hilton tools):",
-    `visitor_id: ${visitorId}`, `conversation_id: ${conversationId}`, `trigger_id: ${triggerId}`,
+    `event_id: ${selectedEvent.id}`, `visitor_id: ${visitorId}`, `conversation_id: ${conversationId}`, `trigger_id: ${triggerId}`,
   ].join("\n");
   let triggerResponse: Response;
   try {

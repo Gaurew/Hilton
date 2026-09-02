@@ -8,7 +8,18 @@ Deno.serve(async (request) => {
   const client = serviceClient();
   const { data: conversation } = await client.from("event_conversations").select("id").eq("id", body.conversation_id).eq("visitor_id", body.visitor_id).maybeSingle();
   if (!conversation) return json({ error: "Conversation does not belong to this visitor." }, 404);
-  const { data, error } = await client.from("event_contexts").select("id, approved_context, updated_at, hilton_events!inner(id, event_name, property_name, event_date, status, visitor_id)").eq("hilton_events.visitor_id", body.visitor_id).eq("hilton_events.status", "approved");
+  const { data: conversationWithEvent } = await client.from("event_conversations").select("event_id").eq("id", body.conversation_id).maybeSingle();
+  if (!conversationWithEvent?.event_id) return json({ error: "This conversation is not linked to an approved Event Plan." }, 409);
+  const { data, error } = await client.from("event_contexts").select("id, approved_context, updated_at, hilton_events!inner(id, event_name, property_name, event_date, status, visitor_id)").eq("event_id", conversationWithEvent.event_id).eq("hilton_events.status", "approved");
   if (error) return json({ error: "Unable to retrieve approved event context." }, 500);
-  return json({ conversation_id: body.conversation_id, change_request: body.change_request, event_contexts: data ?? [] });
+  const eventContexts = (data ?? []).map((context) => ({
+    id: context.id,
+    approved_context: {
+      scenario_key: typeof context.approved_context?.scenario_key === "string" ? context.approved_context.scenario_key : "event_plan",
+      context_markdown: JSON.stringify(context.approved_context, null, 2),
+    },
+    updated_at: context.updated_at,
+    hilton_events: context.hilton_events,
+  }));
+  return json({ conversation_id: body.conversation_id, change_request: body.change_request, event_contexts: eventContexts });
 });

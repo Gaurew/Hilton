@@ -43,5 +43,13 @@ Deno.serve(async (request) => {
   const { data: conversation } = await client.from("event_conversations").select("id").eq("workflow_run_id", payload.workflow_run_id).maybeSingle();
   const { error: taskError } = await client.from("yoxa_approval_tasks").insert({ event_id: eventId, request_id: payload.request_id, workflow_run_id: payload.workflow_run_id, conversation_id: conversation?.id ?? null, title: payload.title, description: payload.description, options });
   if (taskError) return respond({ error: "Unable to store approval task." }, 500);
+  if (conversation?.id) {
+    const approvalMessage = [
+      `## ${payload.title}`, payload.description, "", "### Available options",
+      ...options.map((option) => `- **${option.title}** — ${option.description}`),
+    ].join("\n");
+    const { error: messageError } = await client.from("conversation_messages").insert({ conversation_id: conversation.id, role: "assistant", category: "human_approval", content_markdown: approvalMessage });
+    if (messageError) return respond({ error: "Approval was stored, but its conversation message could not be saved." }, 500);
+  }
   return new Response(null, { status: 204, headers: corsHeaders });
 });

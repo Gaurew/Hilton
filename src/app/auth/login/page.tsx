@@ -1,0 +1,11 @@
+"use client";
+
+import { FormEvent, useState } from "react";
+import { useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
+
+export default function LoginPage() {
+  const router = useRouter(); const [email, setEmail] = useState(""); const [password, setPassword] = useState(""); const [error, setError] = useState<string | null>(null); const [loading, setLoading] = useState(false);
+  async function submit(event: FormEvent) { event.preventDefault(); setLoading(true); setError(null); const { error } = await createClient().auth.signInWithPassword({ email, password }); if (error) { setError("We couldn’t sign you in. Check the shared Event Manager credentials."); setLoading(false); return; } router.replace("/dashboard"); router.refresh(); }
+  return <main className="grid min-h-screen place-items-center bg-[#f5f8fa] p-8"><form onSubmit={submit} className="w-full max-w-md rounded-2xl border border-[#dce4e9] bg-white p-9 shadow-[0_12px_36px_rgba(18,50,80,0.1)]"><p className="text-3xl font-bold tracking-[-0.05em] text-[#123250]">Hilton <span className="font-normal">Events</span></p><p className="mt-2 text-sm leading-6 text-slate-600">Sign in to the Event Manager Workspace.</p><label className="mt-8 block text-sm font-semibold text-[#17324d]">Email<input value={email} onChange={e => setEmail(e.target.value)} type="email" required className="mt-2 w-full rounded-md border border-[#c7d3da] px-3 py-3 outline-none focus:border-[#104c97]" /></label><label className="mt-5 block text-sm font-semibold text-[#17324d]">Password<input value={password} onChange={e => setPassword(e.target.value)} type="password" required className="mt-2 w-full rounded-md border border-[#c7d3da] px-3 py-3 outline-none focus:border-[#104c97]" /></label>{error ? <p className="mt-4 text-sm text-[#b42318]">{error}</p> : null}<button disabled={loading} className="mt-7 w-full rounded-md bg-[#104c97] px-4 py-3 text-sm font-semibold text-white hover:bg-[#0d4284] disabled:bg-slate-400">{loading ? "Signing in…" : "Sign in"}</button><p className="mt-5 text-center text-xs leading-5 text-slate-500">Use the shared Event Manager account supplied for this demonstration.</p></form></main>
+}
