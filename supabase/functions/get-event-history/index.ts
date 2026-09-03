@@ -36,9 +36,8 @@ Deno.serve(async (request) => {
 
   const { data: conversations, error: conversationError } = await client
     .from("event_conversations")
-    .select("id, title, created_at, last_triggered_at, workflow_run_id")
+    .select("id, visitor_id, title, created_at, last_triggered_at, workflow_run_id")
     .eq("event_id", body.event_id)
-    .eq("visitor_id", body.visitor_id)
     .order("created_at", { ascending: false });
   if (conversationError) return respond({ error: "Unable to retrieve event conversations." }, 500);
 
@@ -68,6 +67,7 @@ Deno.serve(async (request) => {
       created_at: conversation.created_at,
       last_triggered_at: conversation.last_triggered_at,
       workflow_run_id: conversation.workflow_run_id,
+      is_owned_by_current_visitor: conversation.visitor_id === body.visitor_id,
       message_count: activity.length,
       last_message_preview: "",
       last_activity_at: latestActivity ?? conversation.last_triggered_at ?? conversation.created_at,
@@ -89,6 +89,7 @@ Deno.serve(async (request) => {
 
   return respond({
     conversations: runSummaries,
+    selected_conversation_is_owned_by_current_visitor: selectedConversationId ? (conversations ?? []).some((conversation) => conversation.id === selectedConversationId && conversation.visitor_id === body.visitor_id) : true,
     messages: selectedMessages,
     assets: selectedAssets.map((asset) => ({
       id: asset.id,

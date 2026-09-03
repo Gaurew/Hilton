@@ -10,6 +10,7 @@ export type EventConversationRun = {
   created_at: string;
   last_triggered_at: string | null;
   workflow_run_id: string | null;
+  is_owned_by_current_visitor: boolean;
   message_count: number;
   last_message_preview: string;
   last_activity_at: string;

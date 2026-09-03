@@ -31,6 +31,7 @@ export function HiltonEventsWorkspace({ embedded = false, eventId, eventName, wo
   const [draft, setDraft] = useState("");
   const [messages, setMessages] = useState<EventMessage[]>([]);
   const [conversationId, setConversationId] = useState<string | null>(null);
+  const [isActiveConversationOwnedByVisitor, setIsActiveConversationOwnedByVisitor] = useState(true);
   const [isSending, setIsSending] = useState(false);
   const [workflowStatus, setWorkflowStatus] = useState<string | null>(null);
   const [approvals, setApprovals] = useState<ApprovalTask[]>([]);
@@ -48,6 +49,7 @@ export function HiltonEventsWorkspace({ embedded = false, eventId, eventName, wo
   const selectConversation = (nextConversationId: string | null, resetView = true) => {
     if (resetView && nextConversationId !== activeConversationId) {
       setMessages([]);
+      setDraft("");
       setApprovals([]);
       setAssets([]);
       setSelectedAsset(null);
@@ -57,6 +59,7 @@ export function HiltonEventsWorkspace({ embedded = false, eventId, eventName, wo
       setApprovalError(null);
       setApprovalDrafts({});
     }
+    if (resetView) setIsActiveConversationOwnedByVisitor(nextConversationId === null);
     setConversationId(nextConversationId);
     onConversationChange?.(nextConversationId);
   };
@@ -95,6 +98,7 @@ export function HiltonEventsWorkspace({ embedded = false, eventId, eventName, wo
         const loadedMessages: EventMessage[] = historyData.messages.map((message: { id: string; role: string; content_markdown: string; created_at: string }) => ({ id: message.id, role: message.role === "user" || message.role === "visitor" ? "user" : "assistant", content: message.content_markdown, createdAt: message.created_at }));
         setMessages(loadedMessages);
         setAssets(Array.isArray(historyData?.assets) ? historyData.assets : []);
+        setIsActiveConversationOwnedByVisitor(activeConversationId ? historyData?.selected_conversation_is_owned_by_current_visitor === true : true);
         const helperStartedAt = helperStartedAtRef.current;
         if (helperStartedAt && loadedMessages.some((message) => message.role === "assistant" && new Date(message.createdAt).getTime() >= new Date(helperStartedAt).getTime())) {
           helperStartedAtRef.current = null;
@@ -113,7 +117,7 @@ export function HiltonEventsWorkspace({ embedded = false, eventId, eventName, wo
 
   async function sendMessage() {
     const content = draft.trim();
-    if (!content || isSending) return;
+    if (!content || isSending || (activeConversationId && !isActiveConversationOwnedByVisitor)) return;
     const { visitorId, visitorAccessKey } = getVisitorSession();
     const requestStartedAt = new Date().toISOString();
     setIsSending(true);
@@ -164,6 +168,7 @@ export function HiltonEventsWorkspace({ embedded = false, eventId, eventName, wo
   }
 
   // A null selection is the new-run composer. Never render stale state from a previously opened run.
+  const isSharedReadOnlyConversation = Boolean(activeConversationId && !isActiveConversationOwnedByVisitor);
   const visibleMessages = activeConversationId ? messages : [];
   const visibleAssets = activeConversationId ? assets : [];
   const visibleApprovals = activeConversationId ? approvals : [];
@@ -201,7 +206,7 @@ export function HiltonEventsWorkspace({ embedded = false, eventId, eventName, wo
           </div>
         </div>
 
-        <div className={(embedded ? "px-6" : "px-12") + " pb-5"}><div className="mx-auto grid max-w-4xl gap-3 rounded-[22px] border border-[#c7d3da] bg-white p-4 shadow-[0_8px_24px_rgba(18,50,80,0.1)] focus-within:border-[#00a8e1] focus-within:ring-2 focus-within:ring-[#cdebf9]"><textarea ref={composerRef} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void sendMessage(); } }} rows={1} placeholder="Describe the change you need for your event…" className="max-h-48 min-h-6 w-full resize-none overflow-y-hidden border-0 bg-transparent text-sm leading-6 text-[#1d2730] outline-none placeholder:text-[#85929b]" /><button onClick={() => void sendMessage()} disabled={!draft.trim() || isSending} aria-label={isSending ? "Sending event change request" : "Send event change request"} className="grid size-10 place-items-center justify-self-end rounded-full bg-[#104c97] text-white transition hover:bg-[#0d4284] disabled:cursor-not-allowed disabled:bg-[#b6c8d8]"><ArrowUp size={19} /></button></div></div>
+        <div className={(embedded ? "px-6" : "px-12") + " pb-5"}><div className="mx-auto grid max-w-4xl gap-3 rounded-[22px] border border-[#c7d3da] bg-white p-4 shadow-[0_8px_24px_rgba(18,50,80,0.1)] focus-within:border-[#00a8e1] focus-within:ring-2 focus-within:ring-[#cdebf9]"><textarea ref={composerRef} value={draft} disabled={isSharedReadOnlyConversation} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void sendMessage(); } }} rows={1} placeholder={isSharedReadOnlyConversation ? "This shared chat is read-only. Select New Chat to start your own conversation." : "Describe the change you need for your event…"} className="max-h-48 min-h-6 w-full resize-none overflow-y-hidden border-0 bg-transparent text-sm leading-6 text-[#1d2730] outline-none placeholder:text-[#85929b] disabled:cursor-not-allowed disabled:text-[#85929b]" /><button onClick={() => void sendMessage()} disabled={!draft.trim() || isSending || isSharedReadOnlyConversation} aria-label={isSending ? "Sending event change request" : "Send event change request"} className="grid size-10 place-items-center justify-self-end rounded-full bg-[#104c97] text-white transition hover:bg-[#0d4284] disabled:cursor-not-allowed disabled:bg-[#b6c8d8]"><ArrowUp size={19} /></button></div></div>
       </section>{isAssetPanelOpen ? <aside style={{ width: panelWidth }} className="relative flex min-w-0 max-w-[48%] shrink-0 flex-col border-l border-[#d8e0e5] bg-white"><div onMouseDown={beginPanelResize} className="absolute -left-1 top-0 z-20 hidden h-full w-3 cursor-col-resize md:block" aria-label="Resize generated assets panel" role="separator" /><header className="flex h-[76px] items-center justify-between border-b border-[#e2e7ea] px-5"><p className="truncate text-sm font-semibold text-[#123250]">{selectedAsset?.file_name ?? "Generated assets"}</p><button onClick={() => setIsAssetPanelOpen(false)} className="rounded-md px-2 py-1 text-sm text-[#315067] hover:bg-[#edf5fb]">Close</button></header>{selectedAsset ? <iframe title={selectedAsset.file_name} src={selectedAsset.url} className="min-h-0 flex-1 bg-[#f5f8fa]" /> : <div className="grid flex-1 place-items-center p-8 text-center"><div><PanelRightOpen className="mx-auto text-[#3977a9]" size={28} /><p className="mt-4 text-sm font-semibold text-[#123250]">No generated assets</p><p className="mt-2 max-w-xs text-sm leading-6 text-[#65727c]">PDFs created by YOXA will appear here when they are available.</p></div></div>}</aside> : null}</div>
     </main>
   );
